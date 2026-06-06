@@ -1,0 +1,40 @@
+# FIFA World Cup 2026 Fantasy agent — tunable configuration.
+# Game RULES (squad size, budget, nation caps, scoring) live in code (rules.py) as the
+# single source of truth; this file holds DATA sources and MODEL weights you may tune.
+
+data:
+  cache_dir: data
+  # How old (hours) the cached FIFA JSON may be before `build`/`advise` auto-refresh.
+  cache_ttl_hours: 6
+
+strength:
+  # How to rate national-team toughness:
+  #   price  — derive each team's strength from the sum of its players' FIFA prices (zero-dependency, default)
+  #   elo    — use World Football Elo from data/elo.csv if present (columns: team,elo), else fall back to price
+  #   odds   — use Polymarket implied "reach <stage>" probabilities (free, live, forward-looking); falls back to price
+  source: price
+  odds_stage: Quarterfinals  # which Polymarket "Nation To Reach X" market to use (Round of 16 / Quarterfinals / Semifinals)
+  beta: 1.5          # how strongly a team-strength gap swings expected goals (higher = more lopsided)
+  base_goals: 1.35   # league-average goals per team per match
+  home_advantage: 0.20  # added to host/home rating gap (Elo-scale ~ small)
+
+expected_points:
+  # Blend of signals into a player's per-match expected points.
+  # Pre-tournament, FIFA in-game form is 0, so price dominates; in-tournament, form is weighted up.
+  form_weight: 0.55      # weight on FIFA stats.form / avg_points once games are played
+  price_weight: 0.45     # weight on price-as-quality prior
+  ratings_weight: 0.35   # weight on SoFIFA overall rating (only used with --ratings + data/sofifa.csv)
+  one_to_watch_bonus: 0.10  # small multiplier bump for FIFA-flagged "ones to watch"
+  start_prob_floor: 0.15    # minimum assumed start probability for a squad-listed player
+  overrides_path: data/overrides.yaml  # optional manual team-news / minutes overrides
+  captain_start_weight: 0.75  # armband score = xPts * (this + (1-this) * start_prob)
+
+optimize:
+  bench_weight: 0.12   # how much expected points on the bench count vs the starting XI
+  hit_threshold: 1.0   # only take a -3 transfer hit if net expected gain exceeds 3 + this
+
+llm:
+  # Optional Claude adjustment layer (injuries / rotation / team news). OFF by default to save tokens.
+  enabled: false
+  model: claude-sonnet-4-6
+  top_n: 40            # only the top-N candidates are sent to the model, to bound tokens

@@ -1,0 +1,21 @@
+# Manual projection overrides for team news, rotation risk, and tactical judgement.
+# Keys can be player names, normalised names, or FIFA player ids.
+#
+# Supported fields:
+#   start_prob: 0.0-1.0       # replaces the model's price-rank start probability
+#   quality: 0.0-1.0          # replaces the blended player-quality percentile
+#   xpts_multiplier: 1.0      # multiplies final projected points
+#   xpts_delta: 0.0           # adds/subtracts final projected points
+#   captain_avoid: true       # prevents captain/vice selection without removing player
+#   notes: text               # shown in reports and rationale
+players:
+  Mikel Oyarzabal:
+    start_prob: 0.72
+    captain_avoid: true
+    notes: "verify Spain starting XI; rotation risk"
+  Gonçalo Ramos:
+    start_prob: 0.74
+    notes: "verify Portugal striker role"
+  Bernardo Silva:
+    start_prob: 0.88
+    notes: "monitor minutes after team news"

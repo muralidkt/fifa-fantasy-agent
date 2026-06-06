@@ -1,0 +1,21 @@
+# Data cache (re-fetched from FIFA public JSON via `fantasy refresh`)
+data/*.json
+data/*.csv
+data/*.html
+!data/.gitkeep
+
+# Your saved squad is local state, not source
+data/my_squad.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+build/
+dist/
+
+# Secrets
+.env
