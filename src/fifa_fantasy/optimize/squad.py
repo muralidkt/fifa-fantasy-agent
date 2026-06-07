@@ -38,7 +38,8 @@ def optimize_squad(rows: list[Row], *, budget: float, nation_cap: int,
     y = pulp.LpVariable.dicts("start", [r.pid for r in rows], cat="Binary")  # in XI
 
     prob += pulp.lpSum(
-        y[r.pid] * r.xpts + bench_weight * (x[r.pid] - y[r.pid]) * r.xpts for r in rows
+        y[r.pid] * r.objective + bench_weight * (x[r.pid] - y[r.pid]) * r.objective
+        for r in rows
     )
 
     # Squad-level constraints.
@@ -104,7 +105,7 @@ def choose_xi(rows_15: list[Row]) -> SelectedSquad:
     idx = {r.pid: r for r in rows_15}
     prob = pulp.LpProblem("xi", pulp.LpMaximize)
     y = pulp.LpVariable.dicts("start", [r.pid for r in rows_15], cat="Binary")
-    prob += pulp.lpSum(y[r.pid] * r.xpts for r in rows_15)
+    prob += pulp.lpSum(y[r.pid] * r.objective for r in rows_15)
     prob += pulp.lpSum(y.values()) == XI_SIZE
     for pos, (lo, hi) in FORMATION_BOUNDS.items():
         s = pulp.lpSum(y[r.pid] for r in rows_15 if r.position == pos)

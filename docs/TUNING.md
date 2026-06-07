@@ -42,6 +42,12 @@ players:
     notes: "verify Portugal striker role"
   Lionel Messi:
     start_prob: 0.95
+    rounds:
+      2:
+        start_prob: 0.90
+        goal_share: 0.34
+        assist_share: 0.22
+        penalty_xg: 0.12
 ```
 
 Keys can be exact player names, normalized names, or FIFA player ids.
@@ -51,11 +57,64 @@ Supported fields:
 | Field | Meaning |
 | --- | --- |
 | `start_prob` | Replaces the model's start probability. Use `0.0` to `1.0`. |
+| `rounds` | Round-specific overrides, e.g. `rounds: {2: {start_prob: 0.80}}`. |
+| `*_by_round` | Shorthand for round-specific scalar fields, e.g. `start_prob_by_round: {2: 0.80}`. |
 | `quality` | Replaces blended player-quality percentile. Use `0.0` to `1.0`. |
+| `goal_share` | Player share of team expected goals; useful for penalty takers and talisman forwards. |
+| `assist_share` | Player share of team expected assists; useful for set-piece and chance-creation roles. |
+| `penalty_xg` | Extra expected penalty goals for the round. |
 | `xpts_multiplier` | Multiplies final projected points. Use for broad boosts/penalties. |
 | `xpts_delta` | Adds or subtracts final projected points. Use for specific judgement calls. |
 | `captain_avoid` | Prevents captain/vice selection without removing the player from the squad. |
 | `notes` | Appears in rationale/watchlists so judgement remains auditable. |
+
+## Fixture-Specific Odds
+
+If you have match odds or trusted xG projections, put them in `data/fixture_odds.yaml`. These
+override the generic team-strength Poisson estimate for that fixture.
+
+```yaml
+fixtures:
+  19:
+    home_xg: 1.60
+    away_xg: 0.80
+    home_clean_sheet: 0.45
+    away_clean_sheet: 0.20
+```
+
+Use fixture ids from `data/rounds.json`. Clean-sheet probabilities are optional; when omitted, the
+agent uses `exp(-opponent_xg)`.
+
+## Recommendation modes
+
+Use `--mode` to change the optimizer objective without changing the raw xPts shown in reports:
+
+| Mode | Behavior |
+| --- | --- |
+| `balanced` | Maximize raw projected points. |
+| `safe` | Penalize start-risk more heavily. |
+| `upside` | Slightly reward volatile and low-owned players. |
+| `differential` | Reward low ownership when projections are close. |
+| `template` | Reward popular picks when projections are close. |
+
+Examples:
+
+```bash
+fantasy build --odds --ratings --mode safe
+fantasy build --odds --ratings --mode differential
+```
+
+## Multi-round transfer horizon
+
+By default, transfer advice optimizes the next matchday only. Use `--horizon` to value future
+fixtures too:
+
+```bash
+fantasy advise --round 2 --horizon 3 --odds --ratings
+```
+
+The current round has weight `1.0`; later rounds decay by `optimize.horizon_decay` in
+`config.yaml`. A horizon is most useful during the group stage, when future opponents are known.
 
 ## Captain logic
 
@@ -121,4 +180,3 @@ Suggested interpretation:
 2. Improve `data/sofifa.csv` coverage and name matching.
 3. Add fixture-specific odds or manual `xpts_multiplier` adjustments for strong/weak matchups.
 4. Use `--llm --news team_news.txt` only when you have useful curated news text.
-

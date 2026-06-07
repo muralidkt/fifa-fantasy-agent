@@ -27,12 +27,14 @@ manual overrides ─────────────────────
 3. **Opponent model** (`model/opponent.py`) — a transparent Poisson model turns the strength gap for
    *that round's fixture* into expected goals for/against and a clean-sheet probability.
 4. **Expected points** (`model/expected_points.py`) — blends player quality (price percentile, FIFA
-   form once games start, optional SoFIFA rating), a start-probability heuristic, manual overrides,
-   and the opponent expectation into a projected score, priced through `rules.py`.
+   form once games start, optional SoFIFA rating), a start-probability heuristic, manual overrides
+   including round-specific starts and attacking shares, and the opponent expectation into a
+   projected score, priced through `rules.py`.
 5. **Optimize** (`optimize/`) — PuLP/CBC integer linear program picks the best legal 15 + XI. It
-   maximizes starting XI points plus a small bench value, then chooses captain and vice using a
-   reliability-aware armband score instead of raw xPts alone. For `advise`, it finds the best
-   transfers within the free allowance, taking a -3 hit only when it pays off.
+   maximizes starting XI points plus a small bench value, optionally nudged by recommendation mode,
+   then chooses captain and vice using a reliability-aware armband score instead of raw xPts alone.
+   For `advise`, it finds the best transfers within the free allowance, taking a -3 hit only when
+   it pays off; direct `advise` can value a weighted multi-round horizon.
 6. **Report / score** (`report.py`, `scoring.py`) — rich tables (+ HTML export); `score` computes the
    actual matchday total from FIFA's official `roundPoints`.
 

@@ -27,11 +27,20 @@ expected_points:
   one_to_watch_bonus: 0.10  # small multiplier bump for FIFA-flagged "ones to watch"
   start_prob_floor: 0.15    # minimum assumed start probability for a squad-listed player
   overrides_path: data/overrides.yaml  # optional manual team-news / minutes overrides
+  fixture_odds_path: data/fixture_odds.yaml  # optional per-fixture xG / clean-sheet inputs
   captain_start_weight: 0.75  # armband score = xPts * (this + (1-this) * start_prob)
 
 optimize:
   bench_weight: 0.12   # how much expected points on the bench count vs the starting XI
   hit_threshold: 1.0   # only take a -3 transfer hit if net expected gain exceeds 3 + this
+  # Recommendation style:
+  #   balanced     raw xPts
+  #   safe         punishes start-risk more heavily
+  #   upside       lightly rewards volatile/differential picks
+  #   differential rewards low-owned players when projections are close
+  #   template     rewards popular picks when projections are close
+  mode: balanced
+  horizon_decay: 0.70  # advise --horizon: MD+1 weight=0.70, MD+2 weight=0.49, etc.
 
 llm:
   # Optional Claude adjustment layer (injuries / rotation / team news). OFF by default to save tokens.

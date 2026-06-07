@@ -30,11 +30,13 @@ external form/Elo ─┘                     sheet odds)        per matchday)   
   the strength gap for *that round's fixture* into goal and clean-sheet expectations. Because the
   opponent changes every matchday, so do the recommendations.
 - **Expected points** (`model/expected_points.py`): blends player quality (price percentile, plus
-  FIFA in-game form once games start), a start-probability heuristic, and the opponent expectation
-  into a projected score, priced through the real 2026 scoring rules.
+  FIFA in-game form once games start), a start-probability heuristic, manual round-specific
+  overrides / attacking shares, and the opponent expectation into a projected score, priced
+  through the real 2026 scoring rules.
 - **Optimizer** (`optimize/`): integer linear programming (PuLP/CBC) picks the best legal 15 and XI
   under budget, the 2/5/5/3 shape, the per-nation cap, and valid formations — and, for transfers,
-  respects your free-transfer allowance (taking a −3 hit only when it clearly pays off).
+  respects your free-transfer allowance (taking a −3 hit only when it clearly pays off). Direct
+  transfer advice can also optimize a weighted multi-round horizon.
 - **Rules** (`rules.py`): the single source of truth for scoring, budget, caps, and transfers.
 
 ## Quick start
@@ -64,7 +66,9 @@ Two ways to run:
 Useful flags: `--odds` (Polymarket implied strength), `--ratings` (blend SoFIFA overalls),
 `--elo` (use `data/elo.csv` for strength), `--llm` (enable the Claude layer),
 `--news team_news.txt` (feed the LLM team news), `--free N` (override free transfers),
-`--yes` (skip the approval gate), `--max-research N` (cap subloop iterations).
+`--mode safe|upside|differential|template` (change recommendation style),
+`--horizon N` (value future rounds in transfer advice), `--yes` (skip the approval gate),
+`--max-research N` (cap subloop iterations).
 
 ## Docs
 

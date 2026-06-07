@@ -68,3 +68,52 @@ def test_ratings_blend_changes_quality(tmp_path):
     rp = {ratings.normalize_name(cheap.name): 1.0}  # treat him as top-rated
     boosted = project_round(ds, 1, model, rating_pct=rp, ratings_weight=0.5)[cheap.id].xpts
     assert boosted > base
+
+
+def test_round_specific_overrides_adjust_projection():
+    from fifa_fantasy.model.expected_points import project_round
+    from fifa_fantasy.model.opponent import OpponentModel
+
+    ds = _ds()
+    model = OpponentModel(strength.team_strength(ds, cache_dir=str(DATA)))
+    player = next(p for p in ds.players if p.available and p.position == "FWD")
+    base = project_round(ds, 1, model)[player.id]
+    overrides = {
+        str(player.id): {
+            "rounds": {
+                "1": {
+                    "start_prob": 0.25,
+                    "goal_share": 0.60,
+                    "assist_share": 0.10,
+                    "penalty_xg": 0.15,
+                }
+            }
+        }
+    }
+    adjusted = project_round(ds, 1, model, overrides=overrides)[player.id]
+    assert adjusted.start_prob == 0.25
+    assert adjusted.components["player_xg"] > base.components["player_xg"]
+
+
+def test_fixture_expectations_override_generic_opponent_model(tmp_path):
+    from fifa_fantasy.ingest import fixture_odds
+    from fifa_fantasy.model.expected_points import project_round
+    from fifa_fantasy.model.opponent import OpponentModel
+
+    ds = _ds()
+    fx = ds.round(1).fixtures[0]
+    path = tmp_path / "fixture_odds.yaml"
+    path.write_text(
+        "fixtures:\n"
+        f"  {fx.id}:\n"
+        "    home_xg: 3.0\n"
+        "    away_xg: 0.2\n"
+        "    home_clean_sheet: 0.85\n"
+    )
+    expectations = fixture_odds.load_fixture_expectations(path, ds)
+    model = OpponentModel(strength.team_strength(ds, cache_dir=str(DATA)))
+    home_player = next(p for p in ds.players if p.available and p.squad_id == fx.home_id and p.position == "FWD")
+    base = project_round(ds, 1, model)[home_player.id]
+    adjusted = project_round(ds, 1, model, fixture_expectations=expectations)[home_player.id]
+    assert adjusted.components["player_xg"] > base.components["player_xg"]
+    assert expectations[(fx.id, fx.home_id)].clean_sheet == 0.85

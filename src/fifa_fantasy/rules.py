@@ -48,22 +48,38 @@ def nation_cap_for_stage(stage: str) -> int:
     }.get(stage, 3)
 
 
-def free_transfers_for_round(round_id: int) -> float:
+FREE_TRANSFERS_BY_ROUND: dict[int, float] = {
+    1: float("inf"),  # pre-tournament build window
+    2: 2,
+    3: 2,
+    4: float("inf"),  # unlimited reset between group stage and Round of 32
+    5: 4,
+    6: 4,
+    7: 5,
+    8: 6,
+}
+
+
+def free_transfers_for_round(round_id: int, banked: int = 0) -> float:
     """Free transfers available going INTO the given round id.
 
     inf == unlimited (the pre-MD1 build window and the MD3->R32 reset).
-    Group rollover (2 + 1 banked) is approximated as 2; pass --free to override.
+    During the group stage, at most one unused transfer can roll into the next
+    group-stage round. The unlimited R32 reset clears any bank.
     """
-    return {
-        1: float("inf"),  # initial squad: unlimited
-        2: 2,
-        3: 2,
-        4: float("inf"),  # unlimited reset between group stage and Round of 32
-        5: 4,
-        6: 4,
-        7: 5,
-        8: 6,
-    }.get(round_id, 2)
+    base = FREE_TRANSFERS_BY_ROUND.get(round_id, 2)
+    if base == float("inf"):
+        return base
+    if round_id == 3:
+        return base + min(max(int(banked), 0), 1)
+    return base
+
+
+def banked_transfer_after_round(round_id: int, free_transfers: float, used_transfers: int) -> int:
+    """Unused group-stage transfer carried into the next group-stage round."""
+    if round_id != 2 or free_transfers == float("inf"):
+        return 0
+    return 1 if used_transfers < int(free_transfers) else 0
 
 
 TRANSFER_HIT = 3  # points deducted per extra transfer beyond the free allowance

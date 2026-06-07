@@ -9,6 +9,7 @@ recommendations.
 | --- | --- | --- |
 | FIFA public fantasy JSON | `data/players.json`, `data/rounds.json`, `data/squads.json` | Players, prices, positions, squads, fixtures, availability, form, official points. |
 | Polymarket odds | `data/polymarket.json` | Optional team-strength signal with `--odds`. |
+| Fixture odds / xG | `data/fixture_odds.yaml` | Optional per-fixture xG and clean-sheet probabilities. |
 | World Football Elo | `data/elo.csv` | Optional team-strength signal with `--elo`. |
 | SoFIFA / EA FC ratings | `data/sofifa.csv` | Optional player-quality signal with `--ratings`. |
 | Manual overrides | `data/overrides.yaml` | Start probability, score adjustments, captain avoidance, risk notes. |
@@ -23,10 +24,11 @@ For each available player in a round:
 
 1. Find the player's actual opponent from `rounds.json`.
 2. Estimate team strength from price, odds, or Elo.
-3. Convert strength gap into goals for, goals against, and clean-sheet probability.
+3. Convert strength gap into goals for, goals against, and clean-sheet probability, unless
+   `data/fixture_odds.yaml` supplies fixture-specific expectations.
 4. Estimate player quality from price percentile, in-game form, and optional ratings.
 5. Estimate start probability from price rank within squad and position.
-6. Apply manual overrides.
+6. Apply manual overrides, including round-specific starts and player attacking shares.
 7. Convert appearance, attacking, defensive, and goalkeeper save expectations into fantasy xPts.
 
 The output is a `Projection` containing:
@@ -64,6 +66,10 @@ captain_score = xPts * (captain_start_weight + (1 - captain_start_weight) * star
 
 This keeps squad selection point-maximizing while making captaincy more robust to rotation risk.
 
+`--mode` changes the optimizer objective only; reports still show raw xPts. `--horizon` on direct
+`advise` optimizes one fixed 15 across multiple future rounds while allowing a different legal XI in
+each round, with future rounds discounted by `optimize.horizon_decay`.
+
 ## Known limitations
 
 | Limitation | Impact | Mitigation |
@@ -81,4 +87,3 @@ This keeps squad selection point-maximizing while making captaincy more robust t
 3. Broader player ratings and aliases for better name matching.
 4. Backtesting against completed matchdays.
 5. Separate output modes for max projection, safe, and differential squads.
-

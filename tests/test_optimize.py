@@ -1,5 +1,10 @@
 """ILP correctness on a synthetic pool: legal squad, valid XI, transfer limits respected."""
 from fifa_fantasy.optimize import Row
+from fifa_fantasy.optimize.transfers import (
+    optimize_squad_sequence,
+    optimize_transfers_horizon,
+    optimize_transfers_sequence,
+)
 from fifa_fantasy.optimize.squad import optimize_squad, choose_xi
 from fifa_fantasy.optimize.transfers import optimize_transfers
 from fifa_fantasy.rules import FORMATION_BOUNDS, SQUAD_COMPOSITION
@@ -76,3 +81,80 @@ def test_transfers_respect_free_allowance():
     assert plan.transfers <= 2
     assert plan.paid_transfers == 0
     _assert_legal(plan.squad, rows)
+
+
+def test_horizon_transfer_can_value_future_round_gain():
+    rows = _pool()
+    squad = optimize_squad(rows, budget=100.0, nation_cap=3)
+    outsider = next(r for r in rows if r.pid not in set(squad.squad_ids))
+
+    current_rows = [
+        Row(**{**r.__dict__, "objective_xpts": 0.1 if r.pid == outsider.pid else r.objective})
+        for r in rows
+    ]
+    future_rows = [
+        Row(**{**r.__dict__, "objective_xpts": 80.0 if r.pid == outsider.pid else r.objective})
+        for r in rows
+    ]
+    plan = optimize_transfers_horizon(
+        [(current_rows, 1.0), (future_rows, 0.8)],
+        squad.squad_ids,
+        free_transfers=1,
+        budget=100.0,
+        nation_cap=3,
+        hit_threshold=1000.0,
+    )
+    assert outsider.pid in plan.in_ids
+    assert plan.paid_transfers == 0
+    _assert_legal(plan.squad, current_rows)
+
+
+def test_sequence_transfer_plans_future_windows():
+    rows = _pool()
+    squad = optimize_squad(rows, budget=100.0, nation_cap=3)
+    outsider = next(r for r in rows if r.pid not in set(squad.squad_ids))
+
+    current_rows = [
+        Row(**{**r.__dict__, "objective_xpts": 0.1 if r.pid == outsider.pid else r.objective})
+        for r in rows
+    ]
+    future_rows = [
+        Row(**{**r.__dict__, "objective_xpts": 80.0 if r.pid == outsider.pid else r.objective})
+        for r in rows
+    ]
+    plan = optimize_transfers_sequence(
+        [(current_rows, 1.0), (future_rows, 0.8)],
+        squad.squad_ids,
+        free_transfers_by_round=[0, 1],
+        budget_by_round=[100.0, 100.0],
+        nation_cap_by_round=[3, 3],
+        hit_threshold=1000.0,
+    )
+    assert outsider.pid not in plan.in_ids
+    assert outsider.pid not in plan.squad.squad_ids
+    assert plan.paid_transfers == 0
+    _assert_legal(plan.squad, current_rows)
+
+
+def test_sequence_squad_considers_future_transfer_limits():
+    rows = _pool()
+    one_round = optimize_squad(rows, budget=100.0, nation_cap=3)
+    outsider = next(r for r in rows if r.pid not in set(one_round.squad_ids))
+
+    current_rows = [
+        Row(**{**r.__dict__, "objective_xpts": 0.1 if r.pid == outsider.pid else r.objective})
+        for r in rows
+    ]
+    future_rows = [
+        Row(**{**r.__dict__, "objective_xpts": 80.0 if r.pid == outsider.pid else r.objective})
+        for r in rows
+    ]
+    planned = optimize_squad_sequence(
+        [(current_rows, 1.0), (future_rows, 0.8)],
+        free_transfers_after_round=[0],
+        budget_by_round=[100.0, 100.0],
+        nation_cap_by_round=[3, 3],
+        hit_threshold=1000.0,
+    )
+    assert outsider.pid in planned.squad_ids
+    _assert_legal(planned, current_rows)

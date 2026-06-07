@@ -1,0 +1,11 @@
+# Optional per-fixture expectations from betting odds or trusted projection sources.
+# Keys are FIFA fixture ids from data/rounds.json.
+#
+# Example:
+# fixtures:
+#   19:
+#     home_xg: 1.60
+#     away_xg: 0.80
+#     home_clean_sheet: 0.45  # optional; defaults to exp(-away_xg)
+#     away_clean_sheet: 0.20  # optional; defaults to exp(-home_xg)
+fixtures: {}

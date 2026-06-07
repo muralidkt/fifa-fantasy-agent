@@ -29,13 +29,13 @@ from langgraph.graph import END, START, StateGraph
 from rich.console import Console
 from rich.panel import Panel
 
-from .ingest import fifa, ratings, strength
+from .ingest import fifa, fixture_odds, ratings, strength
 from .model import llm_adjust
 from .model.expected_points import load_projection_overrides, project_round
 from .model.opponent import OpponentModel
 from .optimize import rows_from_projections
 from .optimize.squad import optimize_squad
-from .optimize.transfers import optimize_transfers
+from .optimize.transfers import optimize_squad_sequence, optimize_transfers, optimize_transfers_sequence
 from . import report, rules
 
 console = Console()
@@ -57,6 +57,7 @@ class State(TypedDict, total=False):
     auto_approve: bool
     current_ids: list[int]    # advise mode: your current 15
     free_transfers: float | None
+    horizon: int
 
     # working state (filled by nodes)
     dataset: Any
@@ -64,6 +65,7 @@ class State(TypedDict, total=False):
     rating_pct: dict
     ratings_weight: float
     overrides: dict
+    fixture_expectations: dict
     base_projections: dict
     projections: dict
     squad: Any                # SelectedSquad
@@ -107,13 +109,15 @@ def ensure_data(state: State) -> dict:
 
     ep = cfg["expected_points"]
     overrides = load_projection_overrides(ep.get("overrides_path"))
+    fixture_expectations = fixture_odds.load_fixture_expectations(ep.get("fixture_odds_path"), ds)
 
     logs.append(f"data ready: {len(ds.squads)} teams, strength source={src}"
                 + (f", SoFIFA ratings on ({len(rating_pct)})" if rating_pct else ""))
     if overrides:
         logs.append(f"projection overrides loaded ({len(overrides)})")
     return {"dataset": ds, "model": model, "rating_pct": rating_pct,
-            "ratings_weight": ratings_weight, "overrides": overrides, "log": logs}
+            "ratings_weight": ratings_weight, "overrides": overrides,
+            "fixture_expectations": fixture_expectations, "log": logs}
 
 
 def assess_situation(state: State) -> dict:
@@ -228,10 +232,16 @@ def human_approval(state: State) -> dict:
 def persist(state: State) -> dict:
     if not state.get("approved"):
         return {"log": ["not saved (rejected)"]}
-    if state.get("mode") != "build":
-        return {"log": ["advise mode — no squad file written"]}
     cfg, ds, squad = state["config"], state["dataset"], state["squad"]
-    _save_squad(cfg["data"]["cache_dir"], ds, squad, state["round_id"])
+    banked = 0
+    if state.get("mode") == "advise" and state.get("transfer_plan"):
+        free = state.get("free_transfers")
+        if free is None:
+            free = rules.free_transfers_for_round(state["round_id"])
+        banked = rules.banked_transfer_after_round(
+            state["round_id"], free, state["transfer_plan"].transfers
+        )
+    _save_squad(cfg["data"]["cache_dir"], ds, squad, state["round_id"], banked_transfer=banked)
     return {"log": [f"saved squad to {cfg['data']['cache_dir']}/my_squad.yaml"]}
 
 
@@ -263,28 +273,92 @@ def _optimize(state: State, projections: dict | None) -> dict:
             rating_pct=state.get("rating_pct") or None, ratings_weight=state.get("ratings_weight", 0.0),
             overrides=state.get("overrides") or None,
             captain_start_weight=ep.get("captain_start_weight", 0.75),
+            fixture_expectations=state.get("fixture_expectations") or None,
         )
     base_projections = state.get("base_projections") or projections
-    rows = rows_from_projections(projections, ds.squads)
-    budget = rules.budget_for_stage(rnd.stage)
-    cap = rules.nation_cap_for_stage(rnd.stage)
+    rows = rows_from_projections(
+        projections, ds.squads, mode=cfg["optimize"].get("mode", "balanced")
+    )
     bench_w = cfg["optimize"]["bench_weight"]
+    rows_by_round, budgets, caps, future_windows = _planning_rows(state, rows)
 
     if state.get("mode") == "advise":
         free_transfers = state.get("free_transfers")
         if free_transfers is None:
             free_transfers = rules.free_transfers_for_round(state["round_id"])
-        plan = optimize_transfers(
-            rows, state["current_ids"],
-            free_transfers=free_transfers,
-            budget=budget, nation_cap=cap, bench_weight=bench_w,
-            hit_threshold=cfg["optimize"]["hit_threshold"],
-        )
+        if len(rows_by_round) > 1:
+            plan = optimize_transfers_sequence(
+                rows_by_round,
+                state["current_ids"],
+                free_transfers_by_round=[free_transfers] + future_windows,
+                budget_by_round=budgets,
+                nation_cap_by_round=caps,
+                bench_weight=bench_w,
+                hit_threshold=cfg["optimize"]["hit_threshold"],
+            )
+        else:
+            plan = optimize_transfers(
+                rows, state["current_ids"],
+                free_transfers=free_transfers,
+                budget=budgets[0], nation_cap=caps[0], bench_weight=bench_w,
+                hit_threshold=cfg["optimize"]["hit_threshold"],
+            )
         return {"base_projections": base_projections, "projections": projections,
                 "squad": plan.squad, "transfer_plan": plan}
-    squad = optimize_squad(rows, budget=budget, nation_cap=cap, bench_weight=bench_w)
+    if len(rows_by_round) > 1:
+        squad = optimize_squad_sequence(
+            rows_by_round,
+            free_transfers_after_round=future_windows,
+            budget_by_round=budgets,
+            nation_cap_by_round=caps,
+            bench_weight=bench_w,
+            hit_threshold=cfg["optimize"]["hit_threshold"],
+        )
+    else:
+        squad = optimize_squad(rows, budget=budgets[0], nation_cap=caps[0], bench_weight=bench_w)
     return {"base_projections": base_projections, "projections": projections,
             "squad": squad, "transfer_plan": None}
+
+
+def _planning_rows(state: State, current_rows):
+    cfg, ds = state["config"], state["dataset"]
+    round_id = state["round_id"]
+    rnd = ds.round(round_id)
+    rows_by_round = [(current_rows, 1.0)]
+    budgets = [rules.budget_for_stage(rnd.stage)]
+    caps = [rules.nation_cap_for_stage(rnd.stage)]
+    transfer_windows = []
+    decay = float(cfg["optimize"].get("horizon_decay", 0.70))
+    for offset in range(1, int(state.get("horizon", 1))):
+        future_round = round_id + offset
+        if future_round > 8:
+            break
+        try:
+            projections = project_round(
+                ds, future_round, state["model"],
+                form_weight=cfg["expected_points"]["form_weight"],
+                price_weight=cfg["expected_points"]["price_weight"],
+                one_to_watch_bonus=cfg["expected_points"]["one_to_watch_bonus"],
+                start_prob_floor=cfg["expected_points"]["start_prob_floor"],
+                rating_pct=state.get("rating_pct") or None,
+                ratings_weight=state.get("ratings_weight", 0.0),
+                overrides=state.get("overrides") or None,
+                captain_start_weight=cfg["expected_points"].get("captain_start_weight", 0.75),
+                fixture_expectations=state.get("fixture_expectations") or None,
+            )
+            future_rnd = ds.round(future_round)
+        except Exception:
+            break
+        if not future_rnd.fixtures:
+            break
+        rows_by_round.append((
+            rows_from_projections(projections, ds.squads, mode=cfg["optimize"].get("mode", "balanced")),
+            decay ** offset,
+        ))
+        budgets.append(rules.budget_for_stage(future_rnd.stage))
+        caps.append(rules.nation_cap_for_stage(future_rnd.stage))
+        transfer_windows.append(rules.free_transfers_for_round(future_round))
+    return rows_by_round, budgets, caps, transfer_windows
 
 
 def _chip_advice(stage: str, round_id: int) -> str:
@@ -306,13 +380,14 @@ def _expected_fixture_count(stage: str) -> int | None:
     }.get(stage)
 
 
-def _save_squad(cache_dir: str, ds, squad, round_id: int) -> None:
+def _save_squad(cache_dir: str, ds, squad, round_id: int, *, banked_transfer: int = 0) -> None:
     import yaml
     from pathlib import Path
 
     by_id = {p.id: p for p in ds.players}
     data = {
         "round": round_id,
+        "banked_transfer": int(banked_transfer),
         "player_ids": squad.squad_ids,
         "starters": squad.starter_ids,
         "bench": squad.bench_ids,
@@ -353,7 +428,8 @@ def build_graph():
 def run(round_id: int, *, mode: str, config: dict, use_elo: bool = False, use_odds: bool = False,
         use_ratings: bool = False, use_llm: bool = False, news: str | None = None,
         max_research_iters: int = 2, auto_approve: bool = False,
-        current_ids: list[int] | None = None, free_transfers: float | None = None) -> State:
+        current_ids: list[int] | None = None, free_transfers: float | None = None,
+        horizon: int = 1) -> State:
     app = build_graph()
     initial: State = {
         "round_id": round_id, "mode": mode, "config": config,
@@ -361,6 +437,7 @@ def run(round_id: int, *, mode: str, config: dict, use_elo: bool = False, use_od
         "use_llm": use_llm, "news": news,
         "max_research_iters": max_research_iters, "auto_approve": auto_approve,
         "current_ids": current_ids or [], "free_transfers": free_transfers,
+        "horizon": horizon,
         "research_iter": 0, "confidence": 0.0,
         "adjustments": {}, "log": [],
     }

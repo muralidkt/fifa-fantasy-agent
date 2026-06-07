@@ -22,6 +22,7 @@ from ..ingest.fifa import Dataset, Player
 from ..ingest.ratings import normalize_name
 from ..rules import SCORING
 from .opponent import OpponentModel
+from .opponent import MatchExpectation
 
 # Share of a team's expected goals that flows to a top-quality player of each position,
 # split into goal-scoring and assisting propensity. Heuristic.
@@ -54,6 +55,7 @@ def project_round(
     ratings_weight: float = 0.0,
     overrides: dict[str, dict[str, Any]] | None = None,
     captain_start_weight: float = 0.75,
+    fixture_expectations: dict[tuple[int, int], MatchExpectation] | None = None,
 ) -> dict[int, Projection]:
     """Return player_id -> Projection for the given round.
 
@@ -67,6 +69,7 @@ def project_round(
     max_form = max((p.form for p in ds.players), default=0.0)
     weights = {"price": price_weight, "form": form_weight, "ratings": ratings_weight}
     overrides = overrides or {}
+    fixture_expectations = fixture_expectations or {}
 
     out: dict[int, Projection] = {}
     for p in ds.players:
@@ -78,15 +81,17 @@ def project_round(
             continue
 
         quality = _quality(p, price_pct, max_form, weights, rating_pct)
-        override = _override_for(p, overrides)
+        override = _override_for(p, overrides, round_id)
         start = _override_float(override, "start_prob", start_probs[p.id])
         start = max(0.0, min(1.0, start))
         if "quality" in override:
             quality = max(0.0, min(1.0, _override_float(override, "quality", quality)))
-        exp = model.expectation(p.squad_id, opp.squad_id, team_home=opp.is_home)
+        exp = fixture_expectations.get((opp.fixture.id, p.squad_id))
+        if exp is None:
+            exp = model.expectation(p.squad_id, opp.squad_id, team_home=opp.is_home)
 
-        comp = _score_components(p, quality, start, exp)
-        xpts = sum(comp.values())
+        comp = _score_components(p, quality, start, exp, override)
+        xpts = sum(float(comp[k]) for k in ("appearance", "attacking", "defensive"))
         if p.one_to_watch:
             xpts *= 1.0 + one_to_watch_bonus
         xpts *= _override_float(override, "xpts_multiplier", 1.0)
@@ -134,15 +139,20 @@ def load_projection_overrides(path: str | Path | None) -> dict[str, dict[str, An
     return out
 
 
-def _score_components(p: Player, quality: float, start: float, exp) -> dict[str, float]:
+def _score_components(p: Player, quality: float, start: float, exp,
+                      override: dict[str, Any] | None = None) -> dict[str, float]:
     pos = p.position
     s = SCORING
+    override = override or {}
 
     appearance = start * s.appearance_long + (1 - start) * 0.15 * s.appearance_short
 
-    player_xg = exp.xgf * GOAL_COEFF.get(pos, 0.0) * quality
-    player_xa = exp.xgf * ASSIST_COEFF.get(pos, 0.0) * quality
-    attacking = start * (player_xg * s.goal[pos] + player_xa * s.assist)
+    goal_share = _optional_float(override, "goal_share")
+    assist_share = _optional_float(override, "assist_share")
+    player_xg = exp.xgf * (goal_share if goal_share is not None else GOAL_COEFF.get(pos, 0.0) * quality)
+    player_xa = exp.xgf * (assist_share if assist_share is not None else ASSIST_COEFF.get(pos, 0.0) * quality)
+    penalty_xg = _override_float(override, "penalty_xg", 0.0)
+    attacking = start * ((player_xg + penalty_xg) * s.goal[pos] + player_xa * s.assist)
 
     defensive = 0.0
     cs_value = s.clean_sheet.get(pos, 0)
@@ -155,16 +165,46 @@ def _score_components(p: Player, quality: float, start: float, exp) -> dict[str,
         exp_saves = exp.xga * GK_SAVES_PER_OPP_GOAL
         defensive += start * (s.saves_per / s.saves_unit) * exp_saves
 
-    return {"appearance": appearance, "attacking": attacking, "defensive": defensive}
+    return {
+        "appearance": appearance,
+        "attacking": attacking,
+        "defensive": defensive,
+        "player_xg": player_xg + penalty_xg,
+        "player_xa": player_xa,
+    }
 
 
-def _override_for(p: Player, overrides: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    return (
+def _override_for(p: Player, overrides: dict[str, dict[str, Any]], round_id: int) -> dict[str, Any]:
+    base = (
         overrides.get(str(p.id))
         or overrides.get(p.name)
         or overrides.get(normalize_name(p.name))
         or {}
     )
+    return _round_override(base, round_id)
+
+
+def _round_override(base: dict[str, Any], round_id: int) -> dict[str, Any]:
+    """Merge a base override with round-specific fields.
+
+    Supported shapes:
+      rounds: {2: {start_prob: 0.75}}
+      start_prob_by_round: {2: 0.75}
+    """
+    merged = {k: v for k, v in base.items() if k != "rounds"}
+    rounds = base.get("rounds")
+    if isinstance(rounds, dict):
+        specific = rounds.get(round_id) or rounds.get(str(round_id))
+        if isinstance(specific, dict):
+            merged.update(specific)
+    for key in ("start_prob", "quality", "xpts_multiplier", "xpts_delta",
+                "goal_share", "assist_share", "penalty_xg"):
+        by_round = base.get(f"{key}_by_round")
+        if isinstance(by_round, dict):
+            value = by_round.get(round_id, by_round.get(str(round_id)))
+            if value is not None:
+                merged[key] = value
+    return merged
 
 
 def _override_float(override: dict[str, Any], key: str, default: float) -> float:
@@ -172,6 +212,15 @@ def _override_float(override: dict[str, Any], key: str, default: float) -> float
         return float(override.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def _optional_float(override: dict[str, Any], key: str) -> float | None:
+    if key not in override:
+        return None
+    try:
+        return float(override[key])
+    except (TypeError, ValueError):
+        return None
 
 
 def _quality(p: Player, price_pct: dict[int, float], max_form: float,

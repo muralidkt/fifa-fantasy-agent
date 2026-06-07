@@ -21,7 +21,10 @@ def test_nation_cap_scales_by_stage():
 def test_free_transfers():
     assert rules.free_transfers_for_round(1) == float("inf")  # initial build
     assert rules.free_transfers_for_round(2) == 2
+    assert rules.free_transfers_for_round(3, banked=1) == 3
     assert rules.free_transfers_for_round(4) == float("inf")  # group->R32 reset
+    assert rules.banked_transfer_after_round(2, 2, 1) == 1
+    assert rules.banked_transfer_after_round(2, 2, 2) == 0
 
 
 def test_scoring_values():

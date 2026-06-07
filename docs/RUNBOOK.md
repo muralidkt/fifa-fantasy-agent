@@ -47,6 +47,7 @@ Advise transfers for a later matchday:
 
 ```bash
 fantasy run --round 2 --advise --odds --ratings --yes
+fantasy advise --round 2 --horizon 3 --odds --ratings
 ```
 
 Score a completed matchday:
@@ -97,4 +98,3 @@ fantasy score --round 1 --html data/report.html
 | Low SoFIFA match count | Add more rows to `data/sofifa.csv` using `name,overall`. |
 | `--odds` unavailable/offline | The agent falls back to price-based strength where possible. Re-run later if you want fresh odds. |
 | Tests fail with missing packages | Use `.venv/bin/python -m pytest`, not a system Python without dependencies. |
-
