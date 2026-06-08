@@ -20,7 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 form = ["soccerdata>=1.8", "pandas>=2.0"]   # FBref recent-form ingestion (Phase 2)
 ratings = ["soccerdata>=1.8", "pandas>=2.0"] # SoFIFA overall-ratings fetch (`fantasy fetch-ratings`)
-llm = ["anthropic>=0.40"]                     # Claude adjustment layer (research subloop)
+llm = ["anthropic>=0.40"]                     # Claude adjustment layer + `fantasy chat` agent
 graph = ["langgraph>=0.2", "anthropic>=0.40"] # LangGraph state-machine orchestration (`fantasy run`)
 dev = ["pytest>=8.0", "langgraph>=0.2"]
 

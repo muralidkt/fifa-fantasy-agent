@@ -83,6 +83,38 @@ def test_transfers_respect_free_allowance():
     _assert_legal(plan.squad, rows)
 
 
+def test_lock_forces_inclusion_and_ban_forces_exclusion():
+    rows = _pool()
+    base = optimize_squad(rows, budget=100.0, nation_cap=3)
+    # Pick a cheap player the optimizer left out, force him in; ban a chosen one.
+    left_out = next(r for r in rows if r.pid not in set(base.squad_ids))
+    chosen = base.squad_ids[0]
+    squad = optimize_squad(rows, budget=100.0, nation_cap=3,
+                           lock_ids={left_out.pid}, ban_ids={chosen})
+    assert left_out.pid in squad.squad_ids
+    assert chosen not in squad.squad_ids
+    _assert_legal(squad, rows)
+
+
+def test_transfers_honour_lock_and_ban():
+    rows = _pool()
+    squad = optimize_squad(rows, budget=100.0, nation_cap=3)
+    held = squad.squad_ids[0]
+    plan = optimize_transfers(rows, squad.squad_ids, free_transfers=float("inf"),
+                              budget=100.0, nation_cap=3, ban_ids={held})
+    assert held not in plan.squad.squad_ids
+    _assert_legal(plan.squad, rows)
+
+
+def test_infeasible_lock_set_raises_with_names():
+    import pytest
+    rows = _pool()
+    # Six GKs is illegal (squad allows exactly 2); locking them all is infeasible.
+    gks = [r.pid for r in rows if r.position == "GK"][:6]
+    with pytest.raises(RuntimeError, match="lock="):
+        optimize_squad(rows, budget=100.0, nation_cap=3, lock_ids=set(gks))
+
+
 def test_horizon_transfer_can_value_future_round_gain():
     rows = _pool()
     squad = optimize_squad(rows, budget=100.0, nation_cap=3)

@@ -29,9 +29,20 @@ class SelectedSquad:
 
 
 def optimize_squad(rows: list[Row], *, budget: float, nation_cap: int,
-                   bench_weight: float = 0.12) -> SelectedSquad:
+                   bench_weight: float = 0.12,
+                   lock_ids: set[int] | None = None,
+                   ban_ids: set[int] | None = None) -> SelectedSquad:
+    """Pick the optimal 15 + XI.
+
+    `lock_ids` forces those players into the 15 (x==1); `ban_ids` forces them out (x==0).
+    Locks/bans are hard constraints — the solver optimises everything else around them and
+    still enforces budget, shape, nation cap, and formation. If the requested locks/bans make
+    a legal squad impossible, raises RuntimeError naming them so callers can report why.
+    """
     rows = [r for r in rows]
     idx = {r.pid: r for r in rows}
+    lock_ids = {pid for pid in (lock_ids or set()) if pid in idx}
+    ban_ids = {pid for pid in (ban_ids or set()) if pid in idx}
     prob = pulp.LpProblem("squad", pulp.LpMaximize)
 
     x = pulp.LpVariable.dicts("pick", [r.pid for r in rows], cat="Binary")   # in 15
@@ -49,6 +60,10 @@ def optimize_squad(rows: list[Row], *, budget: float, nation_cap: int,
         prob += pulp.lpSum(x[r.pid] for r in rows if r.position == pos) == n
     for sid in {r.squad_id for r in rows}:
         prob += pulp.lpSum(x[r.pid] for r in rows if r.squad_id == sid) <= nation_cap
+    for pid in lock_ids:
+        prob += x[pid] == 1
+    for pid in ban_ids:
+        prob += x[pid] == 0
 
     # Starting-XI constraints.
     for r in rows:
@@ -61,7 +76,12 @@ def optimize_squad(rows: list[Row], *, budget: float, nation_cap: int,
 
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
     if pulp.LpStatus[prob.status] != "Optimal":
-        raise RuntimeError(f"squad optimisation failed: {pulp.LpStatus[prob.status]}")
+        detail = ""
+        if lock_ids or ban_ids:
+            names = lambda ids: ", ".join(sorted(idx[p].name for p in ids)) or "—"
+            detail = f" (with lock=[{names(lock_ids)}] ban=[{names(ban_ids)}])"
+        raise RuntimeError(
+            f"squad optimisation failed: {pulp.LpStatus[prob.status]}{detail}")
 
     squad_ids = [r.pid for r in rows if x[r.pid].value() > 0.5]
     starter_ids = [r.pid for r in rows if y[r.pid].value() > 0.5]

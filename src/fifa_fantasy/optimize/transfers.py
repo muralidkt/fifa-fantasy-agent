@@ -34,10 +34,20 @@ def optimize_transfers(
     nation_cap: int,
     bench_weight: float = 0.12,
     hit_threshold: float = 1.0,
+    lock_ids: set[int] | None = None,
+    ban_ids: set[int] | None = None,
 ) -> TransferPlan:
+    """Recommend transfers for one round.
+
+    `lock_ids` forces those players to be kept/bought (x==1); `ban_ids` forces them sold/never
+    bought (x==0). Both are hard constraints layered on top of the usual budget/shape/cap/
+    formation rules; an infeasible request raises RuntimeError naming the locks/bans.
+    """
     idx = {r.pid: r for r in rows}
     current = [pid for pid in current_ids if pid in idx]
     current_set = set(current)
+    lock_ids = {pid for pid in (lock_ids or set()) if pid in idx}
+    ban_ids = {pid for pid in (ban_ids or set()) if pid in idx}
 
     prob = pulp.LpProblem("transfers", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("pick", [r.pid for r in rows], cat="Binary")
@@ -71,10 +81,19 @@ def optimize_transfers(
         s = pulp.lpSum(y[r.pid] for r in rows if r.position == pos)
         prob += s >= lo
         prob += s <= hi
+    for pid in lock_ids:
+        prob += x[pid] == 1
+    for pid in ban_ids:
+        prob += x[pid] == 0
 
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
     if pulp.LpStatus[prob.status] != "Optimal":
-        raise RuntimeError(f"transfer optimisation failed: {pulp.LpStatus[prob.status]}")
+        detail = ""
+        if lock_ids or ban_ids:
+            names = lambda ids: ", ".join(sorted(idx[p].name for p in ids)) or "—"
+            detail = f" (with lock=[{names(lock_ids)}] ban=[{names(ban_ids)}])"
+        raise RuntimeError(
+            f"transfer optimisation failed: {pulp.LpStatus[prob.status]}{detail}")
 
     new_ids = [r.pid for r in rows if x[r.pid].value() > 0.5]
     starter_ids = [r.pid for r in rows if y[r.pid].value() > 0.5]
