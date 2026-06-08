@@ -4,8 +4,9 @@ data/*.csv
 data/*.html
 !data/.gitkeep
 
-# Your saved squad is local state, not source
+# Your saved squad is local tournament state, not source
 data/my_squad.yaml
+data/my_squad*.yaml
 
 # Python
 __pycache__/
